@@ -7,6 +7,7 @@ require 'open3'
 module PryRemote
   DefaultHost = "127.0.0.1"
   DefaultPort = 9876
+  DEFAULT_URI = "druby://#{DefaultHost}:#{DefaultPort}"
 
   # A class to represent an input object created from DRb. This is used because
   # Pry checks for arity to know if a prompt should be passed to the object.
@@ -140,13 +141,12 @@ module PryRemote
   end
 
   class Server
-    def self.run(object, host = DefaultHost, port = DefaultPort, options = {})
-      new(object, host, port, options).run
+    def self.run(object, uri = DEFAULT_URI, options = {})
+      new(object, uri, options).run
     end
 
-    def initialize(object, host = DefaultHost, port = DefaultPort, options = {})
-      @host    = host
-      @port    = port
+    def initialize(object, uri = DEFAULT_URI, options = {})
+      @uri    = uri
 
       @object  = object
       @options = options
@@ -246,15 +246,7 @@ module PryRemote
     attr_reader :client
 
     # @return [String] Host of the server
-    attr_reader :host
-
-    # @return [Integer] Port of the server
-    attr_reader :port
-
-    # @return [String] URI for DRb
-    def uri
-      "druby://#{host}:#{port}"
-    end
+    attr_reader :uri
   end
 
   # Parses arguments and allows to start the client.
@@ -265,6 +257,7 @@ module PryRemote
 
         on :s, :server=, "Host of the server (#{DefaultHost})", :argument => :optional,
            :default => DefaultHost
+        on :socket=, "Socket of the server", :argument => :optional
         on :p, :port=, "Port of the server (#{DefaultPort})", :argument => :optional,
            :as => Integer, :default => DefaultPort
         on :w, :wait, "Wait for the pry server to come up",
@@ -278,8 +271,11 @@ module PryRemote
 
       exit if params.help?
 
-      @host = params[:server]
-      @port = params[:port]
+      if params[:socket]
+        @uri = "drbunix:#{params[:socket]}"
+      else
+        @uri = "druby://#{params[:server]}:#{params[:port]}"
+      end
 
       @wait = params[:wait]
       @persist = params[:persist]
@@ -289,15 +285,7 @@ module PryRemote
     end
 
     # @return [String] Host of the server
-    attr_reader :host
-
-    # @return [Integer] Port of the server
-    attr_reader :port
-
-    # @return [String] URI for DRb
-    def uri
-      "druby://#{host}:#{port}"
-    end
+    attr_reader :uri
 
     attr_reader :wait
     attr_reader :persist
@@ -318,9 +306,8 @@ module PryRemote
     # @param [IO] input  Object holding input for pry-remote
     # @param [IO] output Object pry-debug will send its output to
     def connect(input = Pry.config.input, output = Pry.config.output)
-      local_ip = UDPSocket.open {|s| s.connect(@host, 1); s.addr.last}
-      DRb.start_service "druby://#{local_ip}:0"
-      client = DRbObject.new(nil, uri)
+      DRb.start_service("drbunix:./drb.client.sock")
+      client = DRbObject.new(nil, @uri)
 
       cleanup(client)
 
@@ -367,11 +354,10 @@ end
 class Object
   # Starts a remote Pry session
   #
-  # @param [String]  host Host of the server
-  # @param [Integer] port Port of the server
+  # @param [String]  uri URI of the server
   # @param [Hash] options Options to be passed to Pry.start
-  def remote_pry(host = PryRemote::DefaultHost, port = PryRemote::DefaultPort, options = {})
-    PryRemote::Server.new(self, host, port, options).run
+  def remote_pry(uri = PryRemote::DEFAULT_URI, options = {})
+    PryRemote::Server.new(self, uri, options).run
   end
 
   # a handy alias as many people may think the method is named after the gem
